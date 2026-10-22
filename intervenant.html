@@ -1,0 +1,299 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>GeoChantier - Intervenant</title>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <!-- Bibliothèque EmailJS pour l'envoi d'e-mails direct sans application tierce -->
+    <script src="https://cdn.jsdelivr.net/npm/@emailjs/browser@3/dist/email.min.js"></script>
+    <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; font-family: 'Segoe UI', system-ui, sans-serif; }
+        body { height: 100vh; display: flex; flex-direction: column; background: #0f172a; color: #fff; overflow: hidden; }
+        .header { padding: 10px 14px; background: #1e293b; border-bottom: 1px solid #334155; display: flex; justify-content: space-between; align-items: center; }
+        .header h2 { font-size: 1rem; color: #f59e0b; }
+        #map { flex: 1; width: 100%; }
+        .modal { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.85); z-index: 2000; align-items: flex-end; justify-content: center; }
+        .modal.active { display: flex; }
+        .modal-content { background: #1e293b; width: 100%; max-width: 600px; border-radius: 16px 16px 0 0; padding: 20px; border-top: 1px solid #334155; max-height: 85vh; overflow-y: auto; }
+        .label { font-size: 0.75rem; color: #94a3b8; font-weight: bold; text-transform: uppercase; margin-top: 10px; display: block; }
+        select, textarea, input { width: 100%; padding: 12px; background: #0f172a; border: 1px solid #334155; border-radius: 8px; color: #fff; margin-top: 4px; font-size: 0.95rem; }
+        .btn { background: #f59e0b; color: #0f172a; border: none; padding: 14px; border-radius: 8px; font-weight: bold; width: 100%; margin-top: 12px; cursor: pointer; font-size: 1rem; }
+        .btn-sec { background: #334155; color: #fff; }
+        .nav-btn { display: inline-flex; align-items: center; justify-content: center; padding: 10px 14px; border-radius: 6px; font-size: 0.85rem; text-decoration: none; font-weight: bold; margin-right: 6px; color: white; margin-top: 8px; }
+        .btn-waze { background-color: #33ccff; }
+        .btn-gmaps { background-color: #4285f4; }
+    </style>
+</head>
+<body>
+
+    <div class="header">
+        <div>
+            <h2>📍 GeoChantier Terrain</h2>
+            <p id="chantier-nom" style="font-size:0.75rem; color:#94a3b8;"></p>
+        </div>
+        <button onclick="chargerDonnees()" style="background:#334155; color:#fff; border:none; padding:6px 10px; border-radius:6px; font-size:0.8rem;">🔄 Actualiser</button>
+    </div>
+
+    <div id="map"></div>
+
+    <div class="modal" id="modal-retour">
+        <div class="modal-content">
+            <h3 id="retour-titre" style="font-size:1.2rem;"></h3>
+            <p id="retour-desc" style="font-size:0.85rem; color:#94a3b8; margin-top:4px;"></p>
+            
+            <div id="retour-gps-box"></div>
+            <div id="retour-media-box" style="margin-top:8px;"></div>
+
+            <hr style="border-color:#334155; margin:14px 0;">
+
+            <form id="form-retour" onsubmit="enregistrerRetour(event)">
+                <input type="hidden" id="retour-point-id">
+                
+                <label class="label">Statut du point :</label>
+                <select id="retour-statut">
+                    <option value="À traiter">🔴 À traiter</option>
+                    <option value="En cours">🟠 En cours</option>
+                    <option value="Terminé">🟢 Terminé</option>
+                </select>
+
+                <label class="label">Compte-rendu / Remarques :</label>
+                <textarea id="retour-texte" rows="3" placeholder="Saisir des observations ou le travail effectué..."></textarea>
+
+                <label class="label">Joindre photo / vidéo (Max 5 Mo/fichier) :</label>
+                <input type="file" id="retour-fichiers" multiple accept="image/*,video/*">
+
+                <button type="submit" class="btn">Envoyer le compte-rendu</button>
+                <button type="button" class="btn btn-sec" onclick="fermerModal()">Fermer</button>
+            </form>
+        </div>
+    </div>
+
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <script>
+        const RAW_URL = "https://geochantier-default-rtdb.europe-west1.firebasedatabase.app";
+        const FIREBASE_URL = RAW_URL.replace(/\/+$/, "");
+        const MAX_FILE_SIZE = 5 * 1024 * 1024; // 5 Mo
+
+        // INITIALISATION EMAILJS
+const EMAILJS_PUBLIC_KEY = "RQ8qEej724GWgvTfH";
+const EMAILJS_SERVICE_ID = "service_snvftru";
+const EMAILJS_TEMPLATE_ID = "template_f1vtvbh";
+
+(function(){ emailjs.init(EMAILJS_PUBLIC_KEY); })();
+
+        let map, chantierId, pointsData = {}, nomChantier = '', emailAdmin = '';
+
+        window.onload = function() {
+            const urlParams = new URLSearchParams(window.location.search);
+            chantierId = urlParams.get('chantier');
+
+            map = L.map('map').setView([47.9513, -2.6631], 13);
+            const carteRoutiere = L.tileLayer('https://{s}.tile.openstreetmap.fr/osmfr/{z}/{x}/{y}.png', { attribution: '&copy; OpenStreetMap' }).addTo(map);
+            const vueSat = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', { attribution: '&copy; Esri' });
+            L.control.layers({ "Carte Routière": carteRoutiere, "Vue Aérienne": vueSat }).addTo(map);
+
+            if (chantierId) chargerDonnees();
+        };
+
+        function getIconeParType(type, statut) {
+            let color = statut === 'Terminé' ? 'green' : (statut === 'En cours' ? 'orange' : 'red');
+            let iconUrl = `https://raw.githubusercontent.com/pointhi/leaflet-color-markers/master/img/marker-icon-2x-${color}.png`;
+            if (type === 'depart') iconUrl = 'https://raw.githubusercontent.com/pointhi/leaflet-color-markers/master/img/marker-icon-2x-green.png';
+            if (type === 'arrivee') iconUrl = 'https://raw.githubusercontent.com/pointhi/leaflet-color-markers/master/img/marker-icon-2x-black.png';
+
+            return L.icon({
+                iconUrl: iconUrl,
+                shadowUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/0.7.7/images/marker-shadow.png',
+                iconSize: [25, 41], iconAnchor: [12, 41], popupAnchor: [1, -34], shadowSize: [41, 41]
+            });
+        }
+
+        async function chargerDonnees() {
+            try {
+                const resC = await fetch(`${FIREBASE_URL}/chantiers/${chantierId}.json`);
+                const infoC = await resC.json();
+                if (infoC) {
+                    nomChantier = infoC.nom || '';
+                    emailAdmin = infoC.emailAdmin || '';
+                    document.getElementById('chantier-nom').textContent = nomChantier;
+                }
+
+                const resP = await fetch(`${FIREBASE_URL}/points/${chantierId}.json`);
+                pointsData = await resP.json() || {};
+                afficherPoints();
+            } catch(e) { console.error(e); }
+        }
+
+        function afficherPoints() {
+            map.eachLayer(l => { if (l instanceof L.Marker || l instanceof L.Polyline) map.removeLayer(l); });
+
+            let departDict = {}, arriveeDict = {};
+
+            for (let id in pointsData) {
+                const p = pointsData[id];
+                const tClean = (p.titre || '').trim().toLowerCase();
+                if (p.type === 'depart') departDict[tClean] = p;
+                if (p.type === 'arrivee') arriveeDict[tClean] = p;
+
+                const marker = L.marker([p.lat, p.lng], { icon: getIconeParType(p.type, p.statut) }).addTo(map);
+                marker.on('click', () => ouvrirModal(id, p));
+            }
+
+            for (let t in departDict) {
+                if (arriveeDict[t]) tracerItineraire(departDict[t], arriveeDict[t]);
+            }
+        }
+
+        async function tracerItineraire(dep, arr, cibleMap = map) {
+    try {
+        // Service de routage OpenStreetMap très précis
+        const url = `https://routing.openstreetmap.de/routed-car/route/v1/driving/${dep.lng},${dep.lat};${arr.lng},${arr.lat}?overview=full&geometries=geojson`;
+        const res = await fetch(url);
+        const data = await res.json();
+        
+        if (data.routes && data.routes[0]) {
+            // Conversion stricte des coordonnées GeoJSON [lon, lat] -> Leaflet [lat, lon]
+            const coords = data.routes[0].geometry.coordinates.map(c => [Number(c[1]), Number(c[0])]);
+            const polyline = L.polyline(coords, { color: '#2563eb', weight: 5, opacity: 0.85 }).addTo(cibleMap);
+            return polyline;
+        }
+    } catch(e) {
+        // En cas de secours : ligne droite propre si le serveur de routage est indisponible
+        return L.polyline([[dep.lat, dep.lng], [arr.lat, arr.lng]], { color: '#2563eb', weight: 4, dashArray: '6, 6' }).addTo(cibleMap);
+    }
+}
+
+        function ouvrirModal(id, point) {
+            document.getElementById('retour-point-id').value = id;
+            document.getElementById('retour-titre').textContent = point.titre;
+            document.getElementById('retour-desc').textContent = point.desc || 'Pas de description';
+            document.getElementById('retour-statut').value = point.statut || 'À traiter';
+            
+            document.getElementById('retour-gps-box').innerHTML = 
+                '<a class="nav-btn btn-waze" href="waze://?ll=' + point.lat + ',' + point.lng + '&navigate=yes">🧭 Ouvrir Waze App</a>' +
+                '<a class="nav-btn btn-gmaps" href="google.navigation:q=' + point.lat + ',' + point.lng + '">🗺️ Ouvrir Maps App</a>';
+
+            document.getElementById('retour-media-box').innerHTML = (point.fichiers || []).map(f => renduMedia(f)).join('');
+            document.getElementById('modal-retour').classList.add('active');
+        }
+
+        function renduMedia(f) {
+            if (!f || !f.type) return '';
+            if (f.type.startsWith('image/')) return `<img src="${f.data}" style="width:100%; max-height:140px; object-fit:cover; border-radius:6px; margin-top:4px;">`;
+            if (f.type.startsWith('video/')) return `<video src="${f.data}" controls style="width:100%; max-height:140px; border-radius:6px; margin-top:4px;"></video>`;
+            return `<a href="${f.data}" download="${f.nom}" style="color:#f59e0b; display:block; margin-top:4px;">📄 ${f.nom}</a>`;
+        }
+
+        function fermerModal() { 
+            document.getElementById('modal-retour').classList.remove('active'); 
+            document.getElementById('form-retour').reset();
+        }
+
+async function enregistrerRetour(e) {
+    e.preventDefault();
+    const pointId = document.getElementById('retour-point-id').value;
+    const nouveauStatut = document.getElementById('retour-statut').value;
+    const texte = document.getElementById('retour-texte').value;
+    const filesInput = document.getElementById('retour-fichiers');
+
+    let fichiersData = [];
+    if (filesInput.files) {
+        for (let file of filesInput.files) {
+            if (file.size > MAX_FILE_SIZE) {
+                alert(`Le fichier ${file.name} dépasse la limite de 5 Mo.`);
+                return;
+            }
+            if (file.type.startsWith('image/')) {
+                const imgCompresse = await compresserImage(file);
+                fichiersData.push({ nom: file.name, type: 'image/jpeg', data: imgCompresse });
+            } else { fichiersData.push(await lireFichier(file)); }
+        }
+    }
+
+    // 1. Récupération du point modifié et recherche du point lié (même titre)
+    const pointModifie = pointsData[pointId];
+    const titreClean = (pointModifie?.titre || '').trim().toLowerCase();
+
+    let updates = {};
+    updates[`/points/${chantierId}/${pointId}/statut`] = nouveauStatut;
+
+    // Si le point a un titre, on cherche son jumeau (Départ/Arrivée avec le même titre)
+    if (titreClean) {
+        for (let otherId in pointsData) {
+            if (otherId !== pointId) {
+                const otherTitre = (pointsData[otherId].titre || '').trim().toLowerCase();
+                if (otherTitre === titreClean) {
+                    updates[`/points/${chantierId}/${otherId}/statut`] = nouveauStatut;
+                }
+            }
+        }
+    }
+
+    // 2. Mise à jour simultanée des statuts dans Firebase
+    await fetch(`${FIREBASE_URL}/.json`, { 
+        method: 'PATCH', 
+        body: JSON.stringify(updates) 
+    });
+
+    // 3. Enregistrement du compte-rendu textuel / photos sur le point sélectionné
+    if (texte || fichiersData.length > 0) {
+        const retour = { texte: texte, fichiers: fichiersData, date: new Date().toISOString() };
+        await fetch(`${FIREBASE_URL}/points/${chantierId}/${pointId}/retours.json`, { 
+            method: 'POST', 
+            body: JSON.stringify(retour) 
+        });
+    }
+
+    // 4. Envoi de l'e-mail automatique direct via EmailJS si passé à "Terminé"
+    if (nouveauStatut === 'Terminé' && emailAdmin) {
+        const templateParams = {
+            from_email: "cse.eiffage.bretagne@gmail.com",
+            to_email: emailAdmin,
+            subject: nomChantier,
+            message: "Le ou les points (GPS) ont été marqué(s) comme terminé. Vous pouvez dès à présent consulter le feedback de l'intervenant."
+        };
+
+        try {
+            await emailjs.send(EMAILJS_SERVICE_ID, EMAILJS_TEMPLATE_ID, templateParams);
+            alert("Compte-rendu envoyé, statut du tronçon mis à jour et notification e-mail transmise !");
+        } catch(e) {
+            alert("Compte-rendu enregistré (erreur lors de l'envoi de l'e-mail automatique).");
+        }
+    } else {
+        alert("Mise à jour du tronçon enregistrée !");
+    }
+
+    fermerModal();
+    chargerDonnees();
+}
+
+        function compresserImage(file) {
+    return new Promise(res => {
+        const r = new FileReader(); r.readAsDataURL(file);
+        r.onload = e => {
+            const img = new Image(); img.src = e.target.result;
+            img.onload = () => {
+                const c = document.createElement('canvas'); 
+                // Réduction de la résolution max à 600px (suffisant pour le PDF et les popups)
+                const max = 600; 
+                let w = img.width, h = img.height;
+                if (w > h && w > max) { h *= max / w; w = max; } else if (h > max) { w *= max / h; h = max; }
+                c.width = w; c.height = h;
+                // Compression à 0.45 au lieu de 0.6 pour alléger le JSON sans perte visible
+                c.getContext('2d').drawImage(img, 0, 0, w, h);
+                res(c.toDataURL('image/jpeg', 0.45));
+            };
+        };
+    });
+}
+
+        function lireFichier(file) {
+            return new Promise(res => {
+                const r = new FileReader(); r.readAsDataURL(file);
+                r.onload = e => res({ nom: file.name, type: file.type, data: e.target.result });
+            });
+        }
+    </script>
+</body>
+</html>

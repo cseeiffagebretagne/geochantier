@@ -1,0 +1,1063 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>GeoChantier - Gestionnaire</title>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
+    <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; font-family: 'Segoe UI', system-ui, sans-serif; }
+        body { display: flex; height: 100vh; background: #0f172a; color: #f8fafc; overflow: hidden; flex-direction: row; }
+        
+        #sidebar { width: 400px; background: #1e293b; display: flex; flex-direction: column; border-right: 1px solid #334155; z-index: 1000; transition: transform 0.3s ease, height 0.3s ease; position: relative; }
+        .header { padding: 16px; background: #0f172a; border-bottom: 1px solid #334155; display: flex; justify-content: space-between; align-items: center; }
+        .header h1 { font-size: 1.1rem; color: #f59e0b; }
+        .section { padding: 12px 16px; border-bottom: 1px solid #334155; }
+        .label { font-size: 0.7rem; font-weight: 700; color: #94a3b8; text-transform: uppercase; margin-bottom: 6px; display: block; }
+        select, input, textarea { width: 100%; padding: 8px 10px; background: #0f172a; border: 1px solid #334155; border-radius: 6px; color: #fff; font-size: 0.85rem; margin-bottom: 8px; }
+        
+        .btn { background: #f59e0b; color: #0f172a; border: none; padding: 8px 12px; border-radius: 6px; font-weight: bold; cursor: pointer; width: 100%; font-size: 0.85rem; display: inline-flex; align-items: center; justify-content: center; gap: 4px; }
+        .btn:hover { background: #d97706; }
+        .btn-secondary { background: #334155; color: #fff; }
+        .btn-danger { background: #ef4444; color: #fff; }
+        .btn-sm { padding: 4px 8px; font-size: 0.75rem; }
+        .row { display: flex; gap: 6px; align-items: center; }
+
+        #point-list { flex: 1; overflow-y: auto; padding: 16px; }
+        .point-card { background: #0f172a; border: 1px solid #334155; border-radius: 8px; padding: 12px; margin-bottom: 10px; border-left: 5px solid #ef4444; }
+        .point-card.statut-a-traiter { border-left-color: #ef4444; }
+        .point-card.statut-en-cours { border-left-color: #f59e0b; }
+        .point-card.statut-termine { border-left-color: #10b981; }
+        
+        .badge { display: inline-block; padding: 2px 6px; border-radius: 4px; font-size: 0.7rem; font-weight: bold; }
+        .badge-traiter { background: #ef444422; color: #f87171; border: 1px solid #ef4444; }
+        .badge-cours { background: #f59e0b22; color: #fbbf24; border: 1px solid #f59e0b; }
+        .badge-termine { background: #10b98122; color: #34d399; border: 1px solid #10b981; }
+        
+        #map { flex: 1; height: 100%; position: relative; }
+        .modal { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.75); z-index: 2000; align-items: center; justify-content: center; }
+        .modal.active { display: flex; }
+        .modal-content { background: #1e293b; width: 92%; max-width: 500px; border-radius: 12px; padding: 20px; border: 1px solid #334155; max-height: 90vh; overflow-y: auto; }
+
+        .leaflet-popup-content-wrapper, .leaflet-popup-tip { background: #1e293b !important; color: #f8fafc !important; border: 1px solid #334155; }
+        .leaflet-popup-content b { color: #f59e0b !important; }
+        .leaflet-popup-content p { color: #cbd5e1 !important; }
+
+        .nav-btn { display: inline-block; padding: 4px 8px; border-radius: 4px; font-size: 0.75rem; text-decoration: none; font-weight: bold; margin-right: 4px; color: white; }
+        .btn-waze { background-color: #33ccff; }
+        .btn-gmaps { background-color: #4285f4; }
+
+        .toggle-btn { display: none; background: #f59e0b; color: #0f172a; border: none; width: 32px; height: 32px; border-radius: 6px; font-weight: bold; cursor: pointer; align-items: center; justify-content: center; font-size: 1rem; }
+
+        /* BOUTON FLOTTANT PERMANENT SUR MOBILE */
+        #mobile-btn-ici {
+            display: none;
+            position: fixed;
+            bottom: 20px;
+            right: 20px;
+            z-index: 1500;
+            background: #f59e0b;
+            color: #0f172a;
+            border: 2px solid #ffffff;
+            padding: 12px 18px;
+            border-radius: 50px;
+            font-weight: bold;
+            font-size: 1rem;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.5);
+            cursor: pointer;
+        }
+
+        @media (max-width: 768px) {
+            body { flex-direction: column; }
+            #sidebar { width: 100%; height: 50vh; }
+            #map { height: 50vh; flex: 1; }
+            .toggle-btn { display: flex; }
+            #sidebar.collapsed { height: 50px; overflow: hidden; }
+            #sidebar.collapsed .section, #sidebar.collapsed #point-list { display: none; }
+            #mobile-btn-ici { display: flex; align-items: center; gap: 6px; }
+        }
+    </style>
+</head>
+<body>
+
+    <div id="sidebar">
+        <div class="header">
+            <h1>📍 GeoChantier — Admin</h1>
+            <button class="toggle-btn" id="btn-toggle" onclick="toggleSidebar()">▲</button>
+        </div>
+
+        <div class="section">
+            <span class="label">Filtrer par Administrateur</span>
+            <select id="admin-filter-select" onchange="majSelect()"></select>
+            <div class="row">
+                <button class="btn btn-secondary btn-sm" onclick="ouvrirModalAdmin()">👤 Gérer les Admins</button>
+            </div>
+        </div>
+
+        <div class="section">
+            <div class="row" style="justify-content: space-between; margin-bottom: 4px;">
+                <span class="label">Chantier</span>
+                <label style="font-size: 0.7rem; color: #94a3b8; cursor: pointer;">
+                    <input type="checkbox" id="check-archives" onchange="majSelect()" style="width:auto; margin:0;"> Voir archivés
+                </label>
+            </div>
+            
+            <select id="chantier-select" onchange="changerChantier()"></select>
+
+            <div class="row" style="margin-bottom: 8px;">
+                <button class="btn btn-secondary btn-sm" onclick="renommerChantier()">✏️ Renommer</button>
+                <button class="btn btn-secondary btn-sm" id="btn-archive" onclick="basculerArchivage()">📦 Archiver</button>
+                <button class="btn btn-danger btn-sm" onclick="supprimerChantier()">🗑️ Supprimer</button>
+            </div>
+            <button class="btn btn-secondary btn-sm" onclick="ouvrirModalChantier()" style="margin-bottom:10px;">➕ Nouveau Chantier</button>
+            
+            <span class="label">Lien Intervenant :</span>
+            <div class="row">
+                <input type="text" id="link-input" readonly>
+                <button class="btn btn-secondary btn-sm" onclick="copierLien()" style="width:auto;">📋 Copier</button>
+            </div>
+        </div>
+
+        <div class="section">
+            <div class="row">
+                <button class="btn" onclick="activerAjoutPoint()">➕ Sur la carte</button>
+                <button class="btn btn-secondary" onclick="creerPointIci()">🎯 Ici</button>
+            </div>
+            <div class="row" style="margin-top: 6px;">
+                <button class="btn btn-secondary btn-sm" onclick="chargerPoints()">🔄 Actualiser</button>
+                <button class="btn btn-secondary btn-sm" onclick="exporterPDF()">📄 PDF Paysage</button>
+            </div>
+        </div>
+
+        <div id="point-list"></div>
+    </div>
+
+    <div id="map"></div>
+    <!-- Bouton flottant mobile accessible en permanence -->
+    <button id="mobile-btn-ici" onclick="creerPointIci()">🎯 Ici</button>
+
+    <div id="pdf-map-container" style="position:fixed; left:-9999px; top:-9999px; width:1100px; height:600px;"></div>
+
+    <!-- Modal Admin -->
+    <div class="modal" id="modal-admin">
+        <div class="modal-content">
+            <h3>Gestion des Administrateurs</h3>
+            <form id="form-admin" onsubmit="ajouterAdmin(event)">
+                <label class="label">Nom / Prénom *</label>
+                <input type="text" id="new-admin-nom" required placeholder="Ex: Jean Dupont">
+                
+                <label class="label">Adresse Email *</label>
+                <input type="email" id="new-admin-email" required placeholder="jean.dupont@entreprise.com">
+
+                <button type="submit" class="btn" style="margin-bottom:12px;">➕ Ajouter Administrateur</button>
+            </form>
+
+            <span class="label">Administrateurs existants :</span>
+            <div id="admin-list" style="margin-bottom:12px;"></div>
+
+            <button type="button" class="btn btn-secondary" onclick="fermerModal('modal-admin')">Fermer</button>
+        </div>
+    </div>
+
+    <!-- Modal Chantier -->
+    <div class="modal" id="modal-chantier">
+        <div class="modal-content">
+            <h3>Créer un Nouveau Chantier</h3>
+            <form id="form-chantier" onsubmit="enregistrerNouveauChantier(event)">
+                <label class="label">Nom du Chantier *</label>
+                <input type="text" id="new-chantier-nom" required placeholder="Ex: Viaduc - Réfection Est">
+                
+                <label class="label">Administrateur Référent *</label>
+                <select id="new-chantier-admin-select" required></select>
+
+                <div class="row" style="margin-top:12px;">
+                    <button type="button" class="btn btn-secondary" onclick="fermerModal('modal-chantier')">Annuler</button>
+                    <button type="submit" class="btn">Créer le chantier</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- Modal NOUVEAU Point GPS -->
+    <div class="modal" id="modal-point">
+        <div class="modal-content">
+            <h3>Nouveau Point GPS</h3>
+            <form id="form-point" onsubmit="enregistrerPoint(event)">
+                <input type="hidden" id="point-lat">
+                <input type="hidden" id="point-lng">
+                
+                <label class="label">Type de Point GPS *</label>
+                <select id="point-type">
+                    <option value="simple">📍 Point Simple</option>
+                    <option value="depart">🟢 Point Départ</option>
+                    <option value="via">🔵 Point Intermédiaire (Étape)</option>
+                    <option value="arrivee">🔴 Point Arrivée</option>
+                </select>
+
+                <label class="label">Titre / Emplacement * (Nom identique pour lier le tronçon)</label>
+                <input type="text" id="point-titre" required placeholder="Ex: route de pontivy">
+                
+                <label class="label">Ordre de l'étape (pour les étapes intermédiaires)</label>
+                <input type="number" id="point-ordre" min="1" placeholder="Ex: 1, 2, 3...">
+
+                <label class="label">Instructions / Description</label>
+                <textarea id="point-desc" rows="3" placeholder="Consignes pour l'intervenant..."></textarea>
+                
+                <label class="label">Joindre des fichiers (Max 5 Mo/fichier)</label>
+                <input type="file" id="point-fichiers" multiple accept="image/*,video/*,.pdf,.doc,.docx">
+
+                <div class="row" style="margin-top:12px;">
+                    <button type="button" class="btn btn-secondary" onclick="fermerModal('modal-point')">Annuler</button>
+                    <button type="submit" class="btn">Enregistrer</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- Modal ÉDITION Point GPS -->
+    <div class="modal" id="modal-edit-point">
+        <div class="modal-content">
+            <h3>Éditer le Point GPS</h3>
+            <form id="form-edit-point" onsubmit="sauvegarderEditionPoint(event)">
+                <input type="hidden" id="edit-point-id">
+                
+                <label class="label">Type de Point GPS *</label>
+                <select id="edit-point-type">
+                    <option value="simple">📍 Point Simple</option>
+                    <option value="depart">🟢 Point Départ</option>
+                    <option value="via">🔵 Point Intermédiaire (Étape)</option>
+                    <option value="arrivee">🔴 Point Arrivée</option>
+                </select>
+
+                <label class="label">Titre / Emplacement *</label>
+                <input type="text" id="edit-point-titre" required>
+                
+                <label class="label">Ordre de l'étape (pour les étapes intermédiaires)</label>
+                <input type="number" id="edit-point-ordre" min="1" placeholder="Ex: 1, 2, 3...">
+
+                <label class="label">Instructions / Description</label>
+                <textarea id="edit-point-desc" rows="3"></textarea>
+                
+                <label class="label">Ajouter des fichiers / photos (Max 5 Mo/fichier)</label>
+                <input type="file" id="edit-point-fichiers" multiple accept="image/*,video/*,.pdf,.doc,.docx">
+
+                <div id="edit-fichiers-existants" style="margin-bottom: 10px;"></div>
+
+                <div class="row" style="margin-top:12px;">
+                    <button type="button" class="btn btn-secondary" onclick="fermerModal('modal-edit-point')">Annuler</button>
+                    <button type="submit" class="btn">Mettre à jour</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <script>
+        const RAW_URL = "https://geochantier-default-rtdb.europe-west1.firebasedatabase.app";
+        const FIREBASE_URL = RAW_URL.replace(/\/+$/, "");
+        const MAX_FILE_SIZE = 5 * 1024 * 1024;
+
+        let map, modeAjout = false, chantierActifId = '';
+        let chantiers = {}, admins = {}, pointsActuels = {};
+        const urlRoutiere = 'https://{s}.tile.openstreetmap.fr/osmfr/{z}/{x}/{y}.png';
+        const urlSat = 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}';
+
+        window.onload = function() {
+            map = L.map('map', { renderer: L.canvas() }).setView([47.9513, -2.6631], 13);
+            const carteRoutiere = L.tileLayer(urlRoutiere, { attribution: '&copy; OpenStreetMap', crossOrigin: true }).addTo(map);
+            const vueSat = L.tileLayer(urlSat, { attribution: '&copy; Esri', crossOrigin: true });
+            L.control.layers({ "Carte Routière": carteRoutiere, "Vue Aérienne": vueSat }).addTo(map);
+
+            chargerAdminsEtChantiers();
+
+            map.on('click', function(e) {
+                if (modeAjout) {
+                    document.getElementById('point-lat').value = e.latlng.lat;
+                    document.getElementById('point-lng').value = e.latlng.lng;
+                    document.getElementById('modal-point').classList.add('active');
+                    modeAjout = false;
+                    document.getElementById('map').style.cursor = '';
+                }
+            });
+        };
+
+        function toggleSidebar() {
+            const sidebar = document.getElementById('sidebar');
+            const btn = document.getElementById('btn-toggle');
+            sidebar.classList.toggle('collapsed');
+            btn.textContent = sidebar.classList.contains('collapsed') ? '▼' : '▲';
+            setTimeout(() => map.invalidateSize(), 300);
+        }
+
+        let watchId = null;
+
+function creerPointIci() {
+    // Vérification de la sécurité HTTPS
+    if (window.location.protocol !== 'https:' && window.location.hostname !== 'localhost') {
+        alert("La géolocalisation nécessite impérativement une connexion sécurisée HTTPS.");
+        return;
+    }
+
+    if ("geolocation" in navigator) {
+        navigator.geolocation.getCurrentPosition(
+            position => {
+                const lat = position.coords.latitude;
+                const lng = position.coords.longitude;
+                
+                document.getElementById('point-lat').value = lat;
+                document.getElementById('point-lng').value = lng;
+                map.setView([lat, lng], 17);
+                document.getElementById('modal-point').classList.add('active');
+            },
+            error => {
+                let msg = "Erreur GPS : ";
+                switch(error.code) {
+                    case error.PERMISSION_DENIED:
+                        msg += "Permission refusée dans le navigateur ou par le système Android/iOS.";
+                        break;
+                    case error.POSITION_UNAVAILABLE:
+                        msg += "Signal GPS indisponible (Vérifiez si le GPS est activé sur le téléphone).";
+                        break;
+                    case error.TIMEOUT:
+                        msg += "Délai d'attente dépassé pour récupérer le GPS.";
+                        break;
+                    default:
+                        msg += error.message;
+                }
+                alert(msg);
+            },
+            { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 }
+        );
+    } else {
+        alert("Géolocalisation non supportée par ce navigateur.");
+    }
+}
+
+// Centrage permanent de la carte sur la position GPS en déplacement
+function activerCentragePermanent() {
+    if ("geolocation" in navigator) {
+        if (watchId !== null) {
+            navigator.geolocation.clearWatch(watchId);
+            watchId = null;
+            alert("Suivi GPS désactivé.");
+            return;
+        }
+
+        watchId = navigator.geolocation.watchPosition(
+            position => {
+                const lat = position.coords.latitude;
+                const lng = position.coords.longitude;
+                map.setView([lat, lng], map.getZoom());
+            },
+            err => console.warn("Erreur suivi GPS :", err),
+            { enableHighAccuracy: true, maximumAge: 2000 }
+        );
+        alert("Suivi GPS permanent activé.");
+    }
+}
+
+        async function chargerAdminsEtChantiers() {
+            try {
+                const resA = await fetch(`${FIREBASE_URL}/admins.json`);
+                admins = await resA.json() || {};
+                const resC = await fetch(`${FIREBASE_URL}/chantiers.json`);
+                chantiers = await resC.json() || {};
+            } catch(e) {
+                console.error("Erreur de chargement des chantiers/admins", e);
+            }
+
+            majSelectAdmins();
+            majSelect();
+        }
+
+        function majSelectAdmins() {
+            const filterSelect = document.getElementById('admin-filter-select');
+            const chantierAdminSelect = document.getElementById('new-chantier-admin-select');
+            const listEl = document.getElementById('admin-list');
+
+            if (!filterSelect || !chantierAdminSelect || !listEl) return;
+
+            filterSelect.innerHTML = '<option value="TOUS">-- Tous les Administrateurs --</option>';
+            chantierAdminSelect.innerHTML = '';
+            listEl.innerHTML = '';
+
+            for (let id in admins) {
+                const a = admins[id];
+                const optF = document.createElement('option');
+                optF.value = id; optF.textContent = `${a.nom} (${a.email})`;
+                filterSelect.appendChild(optF);
+
+                const optC = document.createElement('option');
+                optC.value = id; optC.textContent = `${a.nom} (${a.email})`;
+                chantierAdminSelect.appendChild(optC);
+
+                const div = document.createElement('div');
+                div.className = 'row';
+                div.style.cssText = 'justify-content:space-between; background:#0f172a; padding:6px 10px; border-radius:6px; margin-bottom:4px;';
+                div.innerHTML = `<span><b>${a.nom}</b> <small style="color:#94a3b8;">(${a.email})</small></span>
+                    <button class="btn btn-danger btn-sm" style="width:auto;" onclick="supprimerAdmin('${id}')">🗑️</button>`;
+                listEl.appendChild(div);
+            }
+        }
+
+        async function ajouterAdmin(e) {
+            e.preventDefault();
+            const nom = document.getElementById('new-admin-nom').value;
+            const email = document.getElementById('new-admin-email').value;
+            const id = 'admin-' + Date.now();
+
+            admins[id] = { nom: nom, email: email };
+            await fetch(`${FIREBASE_URL}/admins/${id}.json`, { method: 'PUT', body: JSON.stringify(admins[id]) });
+            
+            document.getElementById('form-admin').reset();
+            fermerModal('modal-admin');
+            majSelectAdmins();
+            majSelect();
+        }
+
+        async function supprimerAdmin(id) {
+            if (confirm("Supprimer cet administrateur ?")) {
+                await fetch(`${FIREBASE_URL}/admins/${id}.json`, { method: 'DELETE' });
+                delete admins[id];
+                majSelectAdmins();
+                majSelect();
+            }
+        }
+
+        function majSelect() {
+            const select = document.getElementById('chantier-select');
+            if (!select) return;
+
+            const voirArchives = document.getElementById('check-archives')?.checked || false;
+            const adminFiltre = document.getElementById('admin-filter-select')?.value || 'TOUS';
+            select.innerHTML = '';
+            
+            for (let id in chantiers) {
+                const c = chantiers[id];
+                if (!voirArchives && c.archive) continue;
+                if (adminFiltre !== 'TOUS' && c.adminId !== adminFiltre) continue;
+
+                const opt = document.createElement('option');
+                opt.value = id; 
+                opt.textContent = (c.archive ? '[ARCHIVÉ] ' : '') + c.nom;
+                if (id === chantierActifId) opt.selected = true;
+                select.appendChild(opt);
+            }
+
+            if (!select.value && select.options.length > 0) select.selectedIndex = 0;
+            if (select.value) {
+                changerChantier();
+            } else {
+                chantierActifId = '';
+                if (document.getElementById('link-input')) document.getElementById('link-input').value = '';
+                pointsActuels = {};
+                map.eachLayer(l => { if (l instanceof L.Marker || l instanceof L.Polyline) map.removeLayer(l); });
+                if (document.getElementById('point-list')) document.getElementById('point-list').innerHTML = '';
+            }
+        }
+
+        function changerChantier() {
+            chantierActifId = document.getElementById('chantier-select').value;
+            if (!chantierActifId) return;
+
+            const link = `${window.location.origin}/intervenant.html?chantier=${chantierActifId}`;
+            document.getElementById('link-input').value = link;
+            document.getElementById('btn-archive').textContent = chantiers[chantierActifId]?.archive ? '📂 Désarchiver' : '📦 Archiver';
+
+            chargerPoints();
+        }
+
+        async function chargerPoints() {
+            if (!chantierActifId) return;
+            try {
+                const res = await fetch(`${FIREBASE_URL}/points/${chantierActifId}.json`);
+                pointsActuels = await res.json() || {};
+                await afficherPoints(pointsActuels);
+            } catch(e) { console.error(e); }
+        }
+
+        function getIconeParType(type, statut) {
+            let color = statut === 'Terminé' ? 'green' : (statut === 'En cours' ? 'orange' : 'red');
+            let iconUrl = `https://raw.githubusercontent.com/pointhi/leaflet-color-markers/master/img/marker-icon-2x-${color}.png`;
+            
+            if (type === 'depart') iconUrl = 'https://raw.githubusercontent.com/pointhi/leaflet-color-markers/master/img/marker-icon-2x-green.png';
+            if (type === 'via') iconUrl = 'https://raw.githubusercontent.com/pointhi/leaflet-color-markers/master/img/marker-icon-2x-blue.png';
+            if (type === 'arrivee') iconUrl = 'https://raw.githubusercontent.com/pointhi/leaflet-color-markers/master/img/marker-icon-2x-black.png';
+
+            return L.icon({
+                iconUrl: iconUrl,
+                shadowUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/0.7.7/images/marker-shadow.png',
+                iconSize: [25, 41], iconAnchor: [12, 41], popupAnchor: [1, -34], shadowSize: [41, 41]
+            });
+        }
+
+        async function supprimerPoint(pointId) {
+            if (!chantierActifId || !pointId) return;
+            if (confirm("Voulez-vous vraiment supprimer ce point GPS ?")) {
+                await fetch(`${FIREBASE_URL}/points/${chantierActifId}/${pointId}.json`, { method: 'DELETE' });
+                chargerPoints();
+            }
+        }
+
+        function ouvrirEditionPoint(pointId) {
+            const p = pointsActuels[pointId];
+            if (!p) return;
+
+            document.getElementById('edit-point-id').value = pointId;
+            document.getElementById('edit-point-type').value = p.type || 'simple';
+            document.getElementById('edit-point-titre').value = p.titre || '';
+            document.getElementById('edit-point-ordre').value = p.ordre || '';
+            document.getElementById('edit-point-desc').value = p.desc || '';
+            
+            const fileContainer = document.getElementById('edit-fichiers-existants');
+            fileContainer.innerHTML = '';
+            
+            if (p.fichiers && p.fichiers.length > 0) {
+                fileContainer.innerHTML = '<span class="label">Fichiers actuellement joints :</span>';
+                p.fichiers.forEach((f) => {
+                    const d = document.createElement('div');
+                    d.style.cssText = 'font-size:0.8rem; color:#cbd5e1; margin-bottom:4px;';
+                    d.textContent = `📎 ${f.nom}`;
+                    fileContainer.appendChild(d);
+                });
+            }
+
+            document.getElementById('modal-edit-point').classList.add('active');
+        }
+
+        async function sauvegarderEditionPoint(e) {
+            e.preventDefault();
+            const pointId = document.getElementById('edit-point-id').value;
+            if (!chantierActifId || !pointId) return;
+
+            const pointExistant = pointsActuels[pointId];
+            const filesInput = document.getElementById('edit-point-fichiers');
+            let nouveauxFichiers = [];
+
+            if (filesInput.files && filesInput.files.length > 0) {
+                for (let file of filesInput.files) {
+                    if (file.size > MAX_FILE_SIZE) {
+                        alert(`Le fichier ${file.name} dépasse la taille maximale autorisée de 5 Mo.`);
+                        return;
+                    }
+                    if (file.type.startsWith('image/')) {
+                        const imgCompresse = await compresserImage(file);
+                        nouveauxFichiers.push({ nom: file.name, type: 'image/jpeg', data: imgCompresse });
+                    } else { 
+                        nouveauxFichiers.push(await lireFichier(file)); 
+                    }
+                }
+            }
+
+            const fichiersFinaux = (pointExistant.fichiers || []).concat(nouveauxFichiers);
+
+            const majData = {
+                type: document.getElementById('edit-point-type').value,
+                titre: document.getElementById('edit-point-titre').value,
+                ordre: Number(document.getElementById('edit-point-ordre').value) || 0,
+                desc: document.getElementById('edit-point-desc').value,
+                fichiers: fichiersFinaux
+            };
+
+            await fetch(`${FIREBASE_URL}/points/${chantierActifId}/${pointId}.json`, { 
+                method: 'PATCH', 
+                body: JSON.stringify(majData) 
+            });
+
+            fermerModal('modal-edit-point');
+            chargerPoints();
+        }
+
+        async function afficherPoints(pointsData) {
+            const listEl = document.getElementById('point-list');
+            listEl.innerHTML = '';
+            map.eachLayer(l => { if (l instanceof L.Marker || l instanceof L.Polyline) map.removeLayer(l); });
+
+            let groupes = {};
+
+            for (let id in pointsData) {
+                const p = pointsData[id];
+                p._id = id;
+
+                const titreClean = (p.titre || '').trim().toLowerCase();
+                if (!groupes[titreClean]) groupes[titreClean] = [];
+                groupes[titreClean].push(p);
+
+                const marker = L.marker([p.lat, p.lng], { icon: getIconeParType(p.type, p.statut) }).addTo(map);
+
+                let mediaHTML = (p.fichiers || []).map(f => renduMedia(f)).join('');
+                let retoursHTML = '';
+                
+                if (p.retours) {
+                    for (let rId in p.retours) {
+                        const r = p.retours[rId];
+                        let rMedia = (r.fichiers || []).map(f => renduMedia(f)).join('');
+                        retoursHTML += `<div style="background:#0f172a; color:#f8fafc; padding:8px; margin-top:6px; border-radius:6px; font-size:0.8rem;"><b>Intervenant :</b> ${r.texte || ''}<br>${rMedia}</div>`;
+                    }
+                }
+
+                let badgeClass = p.statut === 'Terminé' ? 'badge-termine' : (p.statut === 'En cours' ? 'badge-cours' : 'badge-traiter');
+                let linksGPS = `<div style="margin-top:8px;">
+                    <a class="nav-btn btn-waze" href="waze://?ll=${p.lat},${p.lng}&navigate=yes">🧭 Waze</a>
+                    <a class="nav-btn btn-gmaps" href="google.navigation:q=${p.lat},${p.lng}">🗺️ Maps</a>
+                </div>`;
+
+                let labelOrdre = p.ordre ? ` (Ordre: ${p.ordre})` : '';
+                let labelType = p.type === 'depart' ? ' [DÉPART]' : (p.type === 'arrivee' ? ' [ARRIVÉE]' : (p.type === 'via' ? ` [ÉTAPE${labelOrdre}]` : ' [POINT SIMPLE]'));
+
+                marker.bindPopup(`<b>${p.titre}${labelType}</b> <span class="badge ${badgeClass}">${p.statut || 'À traiter'}</span>
+                    <p style="margin-top:4px;">${p.desc || ''}</p>${linksGPS}
+                    <div style="margin-top:6px;">${mediaHTML}</div>
+                    ${retoursHTML ? '<hr style="margin:8px 0; border-color:#334155;"><b>Historique :</b>' + retoursHTML : ''}
+                    <hr style="margin:8px 0; border-color:#334155;">
+                    <div class="row">
+                        <button class="btn btn-secondary btn-sm" onclick="ouvrirEditionPoint('${p._id}')">✏️ Éditer</button>
+                        <button class="btn btn-danger btn-sm" onclick="supprimerPoint('${p._id}')">🗑️ Supprimer</button>
+                    </div>`);
+
+                let classStatut = p.statut === 'Terminé' ? 'statut-termine' : (p.statut === 'En cours' ? 'statut-en-cours' : 'statut-a-traiter');
+                const card = document.createElement('div');
+                card.className = `point-card ${classStatut}`;
+                card.innerHTML = `
+                    <div style="display:flex; justify-content:space-between; align-items:center;">
+                        <h4 style="cursor:pointer;" onclick="map.setView([${p.lat}, ${p.lng}], 16);">${p.titre}${labelType}</h4>
+                        <div class="row" style="width:auto;">
+                            <button class="btn btn-secondary btn-sm" style="padding:2px 6px;" onclick="ouvrirEditionPoint('${p._id}')">✏️</button>
+                            <button class="btn btn-danger btn-sm" style="padding:2px 6px;" onclick="supprimerPoint('${p._id}')">🗑️</button>
+                        </div>
+                    </div>
+                    <p style="font-size:0.8rem; color:#94a3b8; margin-top:4px;">${p.desc || ''}</p>`;
+                listEl.appendChild(card);
+            }
+
+            for (let t in groupes) {
+                const pts = groupes[t];
+                const dep = pts.find(x => x.type === 'depart');
+                const arr = pts.find(x => x.type === 'arrivee');
+                const vias = pts.filter(x => x.type === 'via');
+
+                if (dep && arr) {
+                    await tracerItineraireMultiEtapes(dep, vias, arr, map);
+                }
+            }
+        }
+
+        async function tracerItineraireMultiEtapes(dep, vias, arr, cibleMap = map) {
+            if (!dep || !arr) return;
+
+            vias.sort((a, b) => (Number(a.ordre) || 0) - (Number(b.ordre) || 0));
+
+            let coordsReq = [`${Number(dep.lng)},${Number(dep.lat)}`];
+            for (let v of vias) {
+                coordsReq.push(`${Number(v.lng)},${Number(v.lat)}`);
+            }
+            coordsReq.push(`${Number(arr.lng)},${Number(arr.lat)}`);
+
+            try {
+                const url = `https://router.project-osrm.org/route/v1/driving/${coordsReq.join(';')}?overview=full&geometries=geojson&continue_straight=false`;
+                const res = await fetch(url);
+                const data = await res.json();
+                
+                if (data && data.routes && data.routes[0]) {
+                    const coords = data.routes[0].geometry.coordinates.map(c => [Number(c[1]), Number(c[0])]);
+                    return L.polyline(coords, { color: '#2563eb', weight: 6, opacity: 0.9 }).addTo(cibleMap);
+                }
+            } catch(e) {}
+
+            let directCoords = [[Number(dep.lat), Number(dep.lng)]];
+            for (let v of vias) directCoords.push([Number(v.lat), Number(v.lng)]);
+            directCoords.push([Number(arr.lat), Number(arr.lng)]);
+
+            return L.polyline(directCoords, { color: '#2563eb', weight: 5, opacity: 0.9 }).addTo(cibleMap);
+        }
+
+        function renduMedia(f) {
+            if (!f || !f.type) return '';
+            if (f.type.startsWith('image/')) return `<img src="${f.data}" style="width:100%; max-height:140px; object-fit:cover; border-radius:4px; margin-top:4px;">`;
+            if (f.type.startsWith('video/')) return `<video src="${f.data}" controls style="width:100%; max-height:140px; border-radius:4px; margin-top:4px;"></video>`;
+            return `<a href="${f.data}" download="${f.nom}" style="color:#f59e0b; display:block; margin-top:4px;">📄 ${f.nom}</a>`;
+        }
+
+        function ouvrirModalAdmin() { 
+            majSelectAdmins(); 
+            document.getElementById('modal-admin').classList.add('active'); 
+        }
+        function ouvrirModalChantier() { 
+            majSelectAdmins(); 
+            document.getElementById('modal-chantier').classList.add('active'); 
+        }
+        function activerAjoutPoint() { modeAjout = true; document.getElementById('map').style.cursor = 'crosshair'; alert("Cliquez sur la carte."); }
+        
+        function fermerModal(id) { 
+            const el = document.getElementById(id);
+            if (el) el.classList.remove('active'); 
+            if (id === 'modal-point') document.getElementById('form-point').reset();
+            if (id === 'modal-chantier') document.getElementById('form-chantier').reset();
+            if (id === 'modal-edit-point') document.getElementById('form-edit-point').reset();
+        }
+
+        async function enregistrerPoint(e) {
+            e.preventDefault();
+            if (!chantierActifId) { alert("Veuillez sélectionner un chantier."); return; }
+            const filesInput = document.getElementById('point-fichiers');
+            let fichiersData = [];
+            
+            if (filesInput.files) {
+                for (let file of filesInput.files) {
+                    if (file.size > MAX_FILE_SIZE) {
+                        alert(`Le fichier ${file.name} dépasse la taille maximale autorisée de 5 Mo.`);
+                        return;
+                    }
+                    if (file.type.startsWith('image/')) {
+                        const imgCompresse = await compresserImage(file);
+                        fichiersData.push({ nom: file.name, type: 'image/jpeg', data: imgCompresse });
+                    } else { fichiersData.push(await lireFichier(file)); }
+                }
+            }
+
+            const point = {
+                type: document.getElementById('point-type').value,
+                lat: Number(document.getElementById('point-lat').value),
+                lng: Number(document.getElementById('point-lng').value),
+                titre: document.getElementById('point-titre').value,
+                ordre: Number(document.getElementById('point-ordre').value) || 0,
+                desc: document.getElementById('point-desc').value,
+                statut: 'À traiter',
+                fichiers: fichiersData
+            };
+
+            await fetch(`${FIREBASE_URL}/points/${chantierActifId}.json`, { method: 'POST', body: JSON.stringify(point) });
+            fermerModal('modal-point');
+            chargerPoints();
+        }
+
+        function compresserImage(file) {
+            return new Promise(res => {
+                const r = new FileReader(); r.readAsDataURL(file);
+                r.onload = e => {
+                    const img = new Image(); img.src = e.target.result;
+                    img.onload = () => {
+                        const c = document.createElement('canvas'); 
+                        const max = 600;
+                        let w = img.width, h = img.height;
+                        if (w > h && w > max) { h *= max / w; w = max; } else if (h > max) { w *= max / h; h = max; }
+                        c.width = w; c.height = h;
+                        c.getContext('2d').drawImage(img, 0, 0, w, h);
+                        res(c.toDataURL('image/jpeg', 0.45));
+                    };
+                };
+            });
+        }
+
+        function lireFichier(file) {
+            return new Promise(res => {
+                const r = new FileReader(); r.readAsDataURL(file);
+                r.onload = e => res({ nom: file.name, type: file.type, data: e.target.result });
+            });
+        }
+
+        async function enregistrerNouveauChantier(e) {
+            e.preventDefault();
+            const nom = document.getElementById('new-chantier-nom').value;
+            const adminId = document.getElementById('new-chantier-admin-select').value;
+            if (!adminId) { alert("Veuillez d'abord créer un administrateur."); return; }
+
+            const emailAdmin = admins[adminId]?.email || '';
+            const id = 'chantier-' + Date.now();
+
+            chantiers[id] = { nom: nom, adminId: adminId, emailAdmin: emailAdmin, archive: false };
+            await fetch(`${FIREBASE_URL}/chantiers/${id}.json`, { method: 'PUT', body: JSON.stringify(chantiers[id]) });
+            
+            fermerModal('modal-chantier');
+            chantierActifId = id;
+            majSelect();
+        }
+
+        async function renommerChantier() {
+            if (!chantierActifId) return;
+            const actuel = chantiers[chantierActifId]?.nom || '';
+            const nouveau = prompt("Nouveau nom :", actuel);
+            if (nouveau && nouveau !== actuel) {
+                chantiers[chantierActifId].nom = nouveau;
+                await fetch(`${FIREBASE_URL}/chantiers/${chantierActifId}/nom.json`, { method: 'PUT', body: JSON.stringify(nouveau) });
+                majSelect();
+            }
+        }
+
+        async function basculerArchivage() {
+            if (!chantierActifId) return;
+            const etat = !chantiers[chantierActifId].archive;
+            chantiers[chantierActifId].archive = etat;
+            await fetch(`${FIREBASE_URL}/chantiers/${chantierActifId}/archive.json`, { method: 'PUT', body: JSON.stringify(etat) });
+            majSelect();
+        }
+
+        async function supprimerChantier() {
+            if (!chantierActifId) return;
+            if (confirm("Supprimer ce chantier et ses points ?")) {
+                await fetch(`${FIREBASE_URL}/chantiers/${chantierActifId}.json`, { method: 'DELETE' });
+                await fetch(`${FIREBASE_URL}/points/${chantierActifId}.json`, { method: 'DELETE' });
+                delete chantiers[chantierActifId];
+                majSelect();
+            }
+        }
+
+        function copierLien() {
+            navigator.clipboard.writeText(document.getElementById('link-input').value);
+            alert("Lien du chantier copié !");
+        }
+
+        function obtenirUrlFondCarteActif() {
+            let estSat = false;
+            map.eachLayer(l => {
+                if (l instanceof L.TileLayer && l._url === urlSat) estSat = true;
+            });
+            return estSat ? urlSat : urlRoutiere;
+        }
+
+        async function exporterPDF() {
+            if (!chantierActifId) return;
+            alert("Génération du rapport PDF Paysage en cours...");
+
+            const fondActif = obtenirUrlFondCarteActif();
+
+            const resP = await fetch(`${FIREBASE_URL}/points/${chantierActifId}.json`);
+            pointsActuels = await resP.json() || {};
+            
+            let liste = Object.values(pointsActuels);
+            if (liste.length === 0) {
+                alert("Aucun point sur ce chantier.");
+                return;
+            }
+
+            const { jsPDF } = window.jspdf;
+            const doc = new jsPDF('l', 'mm', 'a4'); 
+            const nomChantier = chantiers[chantierActifId]?.nom || 'Chantier';
+
+            let groupes = {};
+            for (let p of liste) {
+                p._id = p._id || Math.random().toString();
+                const tClean = (p.titre || '').trim().toLowerCase();
+                if (!groupes[tClean]) groupes[tClean] = [];
+                groupes[tClean].push(p);
+            }
+
+            // PAGE 1 : VUE GLOBALE
+            doc.setFontSize(20); doc.setTextColor(245, 158, 11);
+            doc.text("RAPPORT DE CHANTIER", 14, 16);
+            doc.setTextColor(0,0,0); doc.setFontSize(12);
+            doc.text(`Chantier : ${nomChantier}`, 14, 23);
+            doc.line(14, 26, 283, 26);
+
+            map.eachLayer(l => { 
+                if (l instanceof L.Marker || l instanceof L.Polyline) map.removeLayer(l); 
+            });
+
+            let boundsGroup = [];
+            for (let p of liste) {
+                if (p.type !== 'via') {
+                    L.marker([p.lat, p.lng], { icon: getIconeParType(p.type, p.statut) }).addTo(map);
+                    boundsGroup.push([p.lat, p.lng]);
+                }
+            }
+
+            for (let t in groupes) {
+                const pts = groupes[t];
+                const dep = pts.find(x => x.type === 'depart');
+                const arr = pts.find(x => x.type === 'arrivee');
+                const vias = pts.filter(x => x.type === 'via');
+                if (dep && arr) {
+                    await tracerItineraireMultiEtapes(dep, vias, arr, map);
+                }
+            }
+
+            if (boundsGroup.length > 0) {
+                map.fitBounds(boundsGroup, { padding: [40, 40] });
+            }
+
+            map.invalidateSize({ animate: false });
+            await new Promise(r => setTimeout(r, 1000));
+
+            const mapCanvas = await html2canvas(document.getElementById('map'), { useCORS: true, allowTaint: true });
+            doc.addImage(mapCanvas.toDataURL('image/jpeg', 0.8), 'JPEG', 14, 28, 269, 110);
+
+            doc.setFontSize(11); doc.setFont(undefined, 'bold');
+            doc.text("Sommaire des Groupes et Emplacements du Chantier :", 14, 145);
+            doc.setFont(undefined, 'normal'); doc.setFontSize(8.5);
+            
+            let xCol = 14, yCol = 151;
+            for (let tClean in groupes) {
+                const ptsGroup = groupes[tClean];
+                const nomGroupe = ptsGroup[0]?.titre || 'Sans nom';
+                doc.text(`- Emplacement/Tronçon : ${nomGroupe} (${ptsGroup.length} point(s) associé(s))`, xCol, yCol);
+                yCol += 4.5;
+                if (yCol > 198) { yCol = 151; xCol += 135; }
+            }
+
+            // PAGES PAR GROUPE
+            let traites = new Set();
+            const pdfContainer = document.getElementById('pdf-map-container');
+
+            for (let tClean in groupes) {
+                const ptsGroup = groupes[tClean];
+                
+                if (ptsGroup.every(p => traites.has(p._id))) continue;
+
+                const nomGroupe = ptsGroup[0]?.titre || 'Point/Tronçon';
+                const dep = ptsGroup.find(x => x.type === 'depart');
+                const arr = ptsGroup.find(x => x.type === 'arrivee');
+                const vias = ptsGroup.filter(x => x.type === 'via');
+                const simples = ptsGroup.filter(x => x.type === 'simple');
+
+                vias.sort((a, b) => (Number(a.ordre) || 0) - (Number(b.ordre) || 0));
+
+                doc.addPage('a4', 'l');
+                pdfContainer.innerHTML = '';
+                const miniMapDiv = document.createElement('div');
+                miniMapDiv.style.width = '1100px'; miniMapDiv.style.height = '600px';
+                pdfContainer.appendChild(miniMapDiv);
+
+                const miniMap = L.map(miniMapDiv, { attributionControl: false, zoomControl: false, renderer: L.canvas() });
+                
+                L.tileLayer(fondActif, { crossOrigin: true }).addTo(miniMap);
+
+                let mBounds = [];
+                ptsGroup.forEach(p => {
+                    L.marker([p.lat, p.lng], { icon: getIconeParType(p.type, p.statut) }).addTo(miniMap);
+                    mBounds.push([p.lat, p.lng]);
+                });
+
+                let distanceTexte = "";
+
+                if (dep && arr) {
+                    let coordsReq = [`${Number(dep.lng)},${Number(dep.lat)}`];
+                    for (let v of vias) coordsReq.push(`${Number(v.lng)},${Number(v.lat)}`);
+                    coordsReq.push(`${Number(arr.lng)},${Number(arr.lat)}`);
+
+                    try {
+                        const url = `https://router.project-osrm.org/route/v1/driving/${coordsReq.join(';')}?overview=full&geometries=geojson&continue_straight=false`;
+                        const resR = await fetch(url);
+                        const dR = await resR.json();
+                        
+                        if (dR && dR.routes && dR.routes[0]) {
+                            const coords = dR.routes[0].geometry.coordinates.map(c => [Number(c[1]), Number(c[0])]);
+                            L.polyline(coords, { color: '#2563eb', weight: 6, opacity: 0.9 }).addTo(miniMap);
+                            
+                            const distKm = (dR.routes[0].distance / 1000).toFixed(2);
+                            distanceTexte = `${distKm} km par la route`;
+                        }
+                    } catch(e) {
+                        distanceTexte = "Tracé direct";
+                    }
+                }
+
+                doc.setFontSize(16); doc.setTextColor(245, 158, 11);
+                doc.text(`EMPLACEMENT / TRONÇON : ${nomGroupe.toUpperCase()} ${distanceTexte ? '(' + distanceTexte + ')' : ''}`, 14, 16);
+                doc.line(14, 19, 283, 19);
+
+                if (mBounds.length > 0) {
+                    miniMap.fitBounds(L.latLngBounds(mBounds), { padding: [40, 40] });
+                }
+
+                miniMap.invalidateSize({ animate: false });
+                await new Promise(r => setTimeout(r, 600));
+
+                const cImg = await html2canvas(miniMapDiv, { useCORS: true, allowTaint: true });
+                doc.addImage(cImg.toDataURL('image/jpeg', 0.8), 'JPEG', 14, 22, 160, 90);
+
+                doc.setFontSize(9); doc.setTextColor(0, 0, 0);
+                doc.text("Points rattachés à ce nom :", 180, 26);
+                doc.setFontSize(8);
+                let yInfo = 32;
+                
+                ptsGroup.forEach(p => {
+                    let labelType = p.type === 'depart' ? 'Départ' : (p.type === 'arrivee' ? 'Arrivée' : (p.type === 'via' ? `Étape (N°${p.ordre || '-'})` : 'Point Simple'));
+                    doc.text(`- [${labelType}] Statut : ${p.statut || 'À traiter'}`, 180, yInfo);
+                    doc.text(`  GPS : ${Number(p.lat).toFixed(5)}, ${Number(p.lng).toFixed(5)}`, 180, yInfo + 4);
+                    yInfo += 9;
+                });
+
+                let yCurr = 118;
+
+                if (dep) { yCurr = insererDetailsEtPhotosPoint(doc, dep, yCurr, 'DÉPART'); traites.add(dep._id); }
+                for (let v of vias) {
+                    let labelVia = v.ordre ? `ÉTAPE N°${v.ordre}` : 'ÉTAPE INTERMÉDIAIRE';
+                    yCurr = insererDetailsEtPhotosPoint(doc, v, yCurr, labelVia);
+                    traites.add(v._id);
+                }
+                if (arr) { yCurr = insererDetailsEtPhotosPoint(doc, arr, yCurr, 'ARRIVÉE'); traites.add(arr._id); }
+                for (let s of simples) {
+                    yCurr = insererDetailsEtPhotosPoint(doc, s, yCurr, 'POINT SIMPLE');
+                    traites.add(s._id);
+                }
+            }
+
+            doc.save(`Rapport_Paysage_${nomChantier.replace(/\s+/g, '_')}.pdf`);
+        }
+
+        function insererDetailsEtPhotosPoint(doc, p, y, sousTitre = '') {
+            if (y > 180) { doc.addPage('a4', 'l'); y = 20; }
+
+            doc.setFillColor(241, 245, 249);
+            doc.rect(14, y, 269, 6, 'F');
+            doc.setFontSize(9); doc.setFont(undefined, 'bold'); doc.setTextColor(15, 23, 42);
+            doc.text(`📍 [${sousTitre}] ${p.titre} (GPS: ${Number(p.lat).toFixed(5)}, ${Number(p.lng).toFixed(5)})`, 16, y + 4.5);
+            y += 9;
+
+            doc.setFontSize(8.5); doc.setFont(undefined, 'normal'); doc.setTextColor(0, 0, 0);
+            doc.text(`Consigne / Description : ${p.desc || 'Aucune.'}`, 16, y);
+            y += 5;
+
+            if (p.fichiers && p.fichiers.length > 0) {
+                let photos = p.fichiers.filter(f => f.type && f.type.startsWith('image/'));
+                if (photos.length > 0) {
+                    doc.setFontSize(8); doc.setFont(undefined, 'italic');
+                    doc.text(`Photos jointes (${sousTitre}) :`, 16, y);
+                    y += 3;
+                    let xPhoto = 16;
+                    for (let f of photos) {
+                        if (y > 160) { doc.addPage('a4', 'l'); y = 20; xPhoto = 16; }
+                        try {
+                            doc.addImage(f.data, 'JPEG', xPhoto, y, 40, 30);
+                            xPhoto += 43;
+                            if (xPhoto > 240) { xPhoto = 16; y += 33; }
+                        } catch(e) {}
+                    }
+                    if (xPhoto !== 16) y += 33;
+                }
+            }
+
+            if (p.retours) {
+                for (let rId in p.retours) {
+                    const r = p.retours[rId];
+                    if (y > 180) { doc.addPage('a4', 'l'); y = 20; }
+                    doc.setFontSize(8); doc.setFont(undefined, 'bold');
+                    doc.text(`-> Retour Intervenant : ${r.texte || 'Sans texte'}`, 16, y);
+                    doc.setFont(undefined, 'normal');
+                    y += 4;
+
+                    if (r.fichiers && r.fichiers.length > 0) {
+                        let retPhotos = r.fichiers.filter(rf => rf.type && rf.type.startsWith('image/'));
+                        if (retPhotos.length > 0) {
+                            let xR = 16;
+                            for (let rf of retPhotos) {
+                                if (y > 160) { doc.addPage('a4', 'l'); y = 20; xR = 16; }
+                                try {
+                                    doc.addImage(rf.data, 'JPEG', xR, y, 40, 30);
+                                    xR += 43;
+                                    if (xR > 240) { xR = 16; y += 33; }
+                                } catch(e) {}
+                            }
+                            if (xR !== 16) y += 33;
+                        }
+                    }
+                }
+            }
+
+            return y + 4;
+        }
+    </script>
+</body>
+</html>
